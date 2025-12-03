@@ -151,9 +151,13 @@ def find_document_contour(image: np.ndarray) -> tuple[np.ndarray | None, bool]:
         peri = cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
 
-        # If contour has 4 points, we found the document
+        # If contour has 4 points and is large enough, we found the document
         if len(approx) == 4:
-            return approx.reshape(4, 2), True
+            contour_area = cv2.contourArea(approx)
+            image_area = image.shape[0] * image.shape[1]
+            # Document must be at least 10% of image
+            if contour_area >= image_area * 0.10:
+                return approx.reshape(4, 2), True
 
     return None, False
 
