@@ -1,6 +1,7 @@
 """
 File storage services using Supabase Storage
 """
+import asyncio
 from typing import Optional
 from supabase import create_client
 
@@ -89,20 +90,24 @@ async def upload_scan_files(
     """
     bucket = Config.STORAGE_BUCKET
 
-    # Define file paths
-    original_path = f"{scan_id}/original.png"
-    processed_path = f"{scan_id}/processed.png"
+    # Define file paths (using JPEG for images)
+    original_path = f"{scan_id}/original.jpg"
+    processed_path = f"{scan_id}/processed.jpg"
     pdf_path = f"{scan_id}/document.pdf"
 
-    # Upload files
-    await upload_file(bucket, original_path, original_bytes, "image/png")
-    await upload_file(bucket, processed_path, processed_bytes, "image/png")
-    await upload_file(bucket, pdf_path, pdf_bytes, "application/pdf")
+    # Upload files in parallel using asyncio.gather()
+    await asyncio.gather(
+        upload_file(bucket, original_path, original_bytes, "image/jpeg"),
+        upload_file(bucket, processed_path, processed_bytes, "image/jpeg"),
+        upload_file(bucket, pdf_path, pdf_bytes, "application/pdf")
+    )
 
-    # Generate signed URLs
-    original_url = await get_signed_url(bucket, original_path, Config.SIGNED_URL_EXPIRY)
-    processed_url = await get_signed_url(bucket, processed_path, Config.SIGNED_URL_EXPIRY)
-    pdf_url = await get_signed_url(bucket, pdf_path, Config.SIGNED_URL_EXPIRY)
+    # Generate signed URLs in parallel
+    original_url, processed_url, pdf_url = await asyncio.gather(
+        get_signed_url(bucket, original_path, Config.SIGNED_URL_EXPIRY),
+        get_signed_url(bucket, processed_path, Config.SIGNED_URL_EXPIRY),
+        get_signed_url(bucket, pdf_path, Config.SIGNED_URL_EXPIRY)
+    )
 
     return {
         "original_path": original_path,

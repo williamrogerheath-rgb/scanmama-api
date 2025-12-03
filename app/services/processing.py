@@ -173,10 +173,24 @@ async def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
     if image is None:
         raise ValueError("Invalid image data")
 
+    # Resize image if too large (cap at 2000px max dimension)
     original_height, original_width = image.shape[:2]
+    max_dimension = 2000
 
-    # Store original as bytes
-    _, original_encoded = cv2.imencode('.png', image)
+    if max(original_height, original_width) > max_dimension:
+        # Calculate new dimensions while maintaining aspect ratio
+        if original_height > original_width:
+            new_height = max_dimension
+            new_width = int(original_width * (max_dimension / original_height))
+        else:
+            new_width = max_dimension
+            new_height = int(original_height * (max_dimension / original_width))
+
+        # Resize using INTER_AREA for best quality when downscaling
+        image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+    # Store original as bytes (JPEG quality 85)
+    _, original_encoded = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
     original_bytes = original_encoded.tobytes()
 
     # Find document contour
@@ -207,15 +221,15 @@ async def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
     else:
         final_image_bgr = final_image
 
-    # Encode processed image to PNG
-    _, processed_encoded = cv2.imencode('.png', final_image_bgr)
+    # Encode processed image to JPEG (quality 85)
+    _, processed_encoded = cv2.imencode('.jpg', final_image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
     processed_bytes = processed_encoded.tobytes()
 
     # Generate PDF
     # img2pdf works best with PIL Image
     pil_image = Image.fromarray(cv2.cvtColor(final_image_bgr, cv2.COLOR_BGR2RGB))
     img_byte_arr = io.BytesIO()
-    pil_image.save(img_byte_arr, format='PNG')
+    pil_image.save(img_byte_arr, format='JPEG', quality=85)
     img_byte_arr.seek(0)
 
     pdf_bytes = img2pdf.convert(img_byte_arr.getvalue())
