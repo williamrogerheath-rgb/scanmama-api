@@ -1,0 +1,1 @@
+"""ScanMama API application package"""
