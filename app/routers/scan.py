@@ -56,6 +56,9 @@ async def create_scan(
 
     api_key_record, user_record = result
 
+    # Extract plan early for use throughout function
+    plan = user_record.get("plan", "trial")
+
     # Check scan allowance
     can_scan, is_overage = check_scan_allowance(user_record)
 
@@ -117,7 +120,7 @@ async def create_scan(
         )
 
     # Generate scan ID
-    scan_id = f"sc_{uuid.uuid4().hex[:16]}"
+    scan_id = str(uuid.uuid4())
 
     # Upload files to storage
     try:
@@ -161,7 +164,6 @@ async def create_scan(
         supabase.table("scans").insert(scan_data).execute()
 
         # Update user scan count
-        plan = user_record["plan"]
         if plan == "trial":
             supabase.table("users").update({
                 "trial_scans_remaining": user_record["trial_scans_remaining"] - 1
