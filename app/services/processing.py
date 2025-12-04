@@ -596,10 +596,10 @@ def apply_color_mode(image: np.ndarray, color_mode: str) -> np.ndarray:
 # MAIN PROCESSING PIPELINE
 # =============================================================================
 
-async def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
+def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
     """
     Full document processing pipeline
-    
+
     Pipeline:
     1. Decode and validate image
     2. Detect document edges (multi-strategy)
@@ -607,7 +607,7 @@ async def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
     4. Enhance image quality
     5. Apply color mode
     6. Generate PDF
-    
+
     Returns dict with processed files and metadata
     """
     start_time = time.time()

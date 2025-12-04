@@ -6,6 +6,7 @@ import time
 import img2pdf
 import io
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from supabase import create_client
 
 from app.config import Config
@@ -112,7 +113,7 @@ async def create_scan(
 
     # Process document
     try:
-        processed = await process_document(image_bytes, request.options)
+        processed = await run_in_threadpool(process_document, image_bytes, request.options)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -303,7 +304,7 @@ async def create_multi_scan(
 
         # Process document
         try:
-            processed = await process_document(image_bytes, request.options)
+            processed = await run_in_threadpool(process_document, image_bytes, request.options)
             processed_images.append(processed)
         except Exception as e:
             raise HTTPException(
