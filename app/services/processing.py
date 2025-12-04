@@ -78,7 +78,6 @@ def validate_quadrilateral(contour: np.ndarray, image_shape: Tuple[int, int]) ->
     # 1. Check area (document should be 15-80% of image)
     contour_area = cv2.contourArea(ordered)
     area_ratio = contour_area / image_area
-    print(f"Validate: area_ratio={area_ratio:.3f}, threshold=0.80, valid={area_ratio >= 0.15 and area_ratio <= 0.80}")
     if area_ratio < 0.15 or area_ratio > 0.80:
         return False, 0.0
     
@@ -443,22 +442,17 @@ def find_document_contour(image: np.ndarray) -> DetectionResult:
             contour = detect_func()
             if contour is not None:
                 is_valid, confidence = validate_quadrilateral(contour, image.shape)
-                print(f"Strategy {method_name}: contour={'found' if contour is not None else 'none'}, valid={is_valid}, confidence={confidence}")
                 if is_valid and confidence > best_result.confidence:
                     best_result = DetectionResult(contour, confidence, method_name)
 
                     # If we found a high-confidence result, use it immediately
                     if confidence >= 0.8:
-                        print(f"Final detection result: confidence={best_result.confidence}, method={best_result.method}")
                         return best_result
-            else:
-                print(f"Strategy {method_name}: contour='none', valid=False, confidence=0.0")
         except Exception as e:
             # Log but continue with other strategies
             print(f"Detection strategy {method_name} failed: {e}")
             continue
 
-    print(f"Final detection result: confidence={best_result.confidence}, method={best_result.method}")
     return best_result
 
 
@@ -659,19 +653,6 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
     
     # Find document contour
     detection_result = find_document_contour(detection_image)
-
-    # Debug logging
-    image_area = original_height * original_width
-    print(f"Image size: {original_width}x{original_height}")
-    print(f"Detection: confidence={detection_result.confidence}, method={detection_result.method}")
-    if detection_result.contour is not None:
-        # Scale contour to original size for logging
-        contour_for_logging = detection_result.contour.copy()
-        if scale_factor < 1.0:
-            contour_for_logging = contour_for_logging / scale_factor
-        print(f"Contour points: {contour_for_logging.tolist()}")
-        contour_area = cv2.contourArea(contour_for_logging)
-        print(f"Contour area: {contour_area/image_area*100:.1f}% of image")
 
     document_detected = False
     if detection_result.contour is not None and detection_result.confidence >= 0.5:
