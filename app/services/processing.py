@@ -75,10 +75,11 @@ def validate_quadrilateral(contour: np.ndarray, image_shape: Tuple[int, int]) ->
     pts = contour.reshape(4, 2).astype(np.float32)
     ordered = order_points(pts)
     
-    # 1. Check area (document should be 15-95% of image)
+    # 1. Check area (document should be 15-80% of image)
     contour_area = cv2.contourArea(ordered)
     area_ratio = contour_area / image_area
-    if area_ratio < 0.15 or area_ratio > 0.95:
+    print(f"Validate: area_ratio={area_ratio:.3f}, threshold=0.80, valid={area_ratio >= 0.15 and area_ratio <= 0.80}")
+    if area_ratio < 0.15 or area_ratio > 0.80:
         return False, 0.0
     
     # 2. Check aspect ratio (should be reasonable for a document)
