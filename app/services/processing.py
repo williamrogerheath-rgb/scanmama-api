@@ -130,18 +130,16 @@ def find_largest_quad(edge_image: np.ndarray, min_area: float) -> np.ndarray | N
     Find the largest 4-sided contour in an edge image
     """
     contours, _ = cv2.findContours(edge_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
 
     for contour in contours:
         peri = cv2.arcLength(contour, True)
-        for epsilon_factor in [0.02, 0.03, 0.04, 0.05]:
+        for epsilon_factor in [0.02, 0.04]:
             approx = cv2.approxPolyDP(contour, epsilon_factor * peri, True)
-
             if len(approx) == 4:
                 contour_area = cv2.contourArea(approx)
                 if contour_area >= min_area:
                     return approx.reshape(4, 2)
-
     return None
 
 
@@ -165,15 +163,7 @@ def find_document_contour(image: np.ndarray) -> tuple[np.ndarray | None, bool]:
     if contour is not None:
         return contour, True
 
-    # Strategy 2: Adaptive threshold
-    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-    thresh = cv2.bitwise_not(thresh)
-
-    contour = find_largest_quad(thresh, min_area)
-    if contour is not None:
-        return contour, True
-
-    # Strategy 3: Aggressive Canny with morphological closing
+    # Strategy 2: Aggressive Canny (skip adaptive threshold - too slow)
     edges2 = cv2.Canny(blurred, 30, 100)
     kernel_large = np.ones((5, 5), np.uint8)
     edges2 = cv2.morphologyEx(edges2, cv2.MORPH_CLOSE, kernel_large)
@@ -195,40 +185,43 @@ async def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
 
     # Decode image
     nparr = np.frombuffer(image_bytes, np.uint8)
-    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    original_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-    if image is None:
+    if original_image is None:
         raise ValueError("Invalid image data")
 
-    # Resize image if too large (cap at 2000px max dimension)
-    original_height, original_width = image.shape[:2]
-    max_dimension = 2000
+    # Get original dimensions
+    original_height, original_width = original_image.shape[:2]
 
-    if max(original_height, original_width) > max_dimension:
-        # Calculate new dimensions while maintaining aspect ratio
-        if original_height > original_width:
-            new_height = max_dimension
-            new_width = int(original_width * (max_dimension / original_height))
-        else:
-            new_width = max_dimension
-            new_height = int(original_height * (max_dimension / original_width))
+    # Create smaller image for fast detection (max 1000px)
+    detection_max = 1000
+    scale_factor = 1.0
 
-        # Resize using INTER_AREA for best quality when downscaling
-        image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    if max(original_height, original_width) > detection_max:
+        scale_factor = detection_max / max(original_height, original_width)
+        detection_width = int(original_width * scale_factor)
+        detection_height = int(original_height * scale_factor)
+        detection_image = cv2.resize(original_image, (detection_width, detection_height), interpolation=cv2.INTER_AREA)
+    else:
+        detection_image = original_image
 
     # Store original as bytes (JPEG quality 85)
-    _, original_encoded = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    _, original_encoded = cv2.imencode('.jpg', original_image, [cv2.IMWRITE_JPEG_QUALITY, 85])
     original_bytes = original_encoded.tobytes()
 
-    # Find document contour
-    doc_contour, document_detected = find_document_contour(image)
+    # Find document contour on smaller image
+    doc_contour, document_detected = find_document_contour(detection_image)
 
     if document_detected and doc_contour is not None:
-        # Apply perspective transform
-        warped = four_point_transform(image, doc_contour)
+        # Scale contour back to original size if we downscaled
+        if scale_factor < 1.0:
+            doc_contour = doc_contour / scale_factor
+
+        # Apply perspective transform on original high-res image
+        warped = four_point_transform(original_image, doc_contour)
     else:
         # Use original if no document found
-        warped = image.copy()
+        warped = original_image.copy()
 
     # Apply enhancements
     enhanced = enhance_image(warped, options.quality)
