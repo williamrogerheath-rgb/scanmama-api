@@ -125,60 +125,41 @@ def apply_color_mode(image: np.ndarray, color_mode: str) -> np.ndarray:
         return image
 
 
-def find_largest_quad(edge_image: np.ndarray, min_area: float) -> np.ndarray | None:
-    """
-    Find the largest 4-sided contour in an edge image
-    """
-    contours, _ = cv2.findContours(edge_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
-
-    for contour in contours:
-        peri = cv2.arcLength(contour, True)
-        for epsilon_factor in [0.02, 0.04]:
-            approx = cv2.approxPolyDP(contour, epsilon_factor * peri, True)
-            if len(approx) == 4:
-                contour_area = cv2.contourArea(approx)
-                if contour_area >= min_area:
-                    return approx.reshape(4, 2)
-    return None
-
-
 def find_document_contour(image: np.ndarray) -> tuple[np.ndarray | None, bool]:
+    """Find document using largest bright region"""
     height, width = image.shape[:2]
     image_area = height * width
-    min_area = image_area * 0.10
+    min_area = image_area * 0.15  # Document must be at least 15% of image
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Strategy 1: Brightness threshold (white paper on dark background)
-    _, bright_thresh = cv2.threshold(blurred, 150, 255, cv2.THRESH_BINARY)
-    kernel = np.ones((5, 5), np.uint8)
-    bright_thresh = cv2.morphologyEx(bright_thresh, cv2.MORPH_CLOSE, kernel)
-    bright_thresh = cv2.morphologyEx(bright_thresh, cv2.MORPH_OPEN, kernel)
+    # Find bright regions (white paper)
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    contour = find_largest_quad(bright_thresh, min_area)
-    if contour is not None:
-        return contour, True
+    # Clean up
+    kernel = np.ones((7, 7), np.uint8)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
-    # Strategy 2: Standard Canny
-    edges = cv2.Canny(blurred, 50, 150)
-    kernel_small = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel_small, iterations=1)
+    # Find contours
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    contour = find_largest_quad(edges, min_area)
-    if contour is not None:
-        return contour, True
+    if not contours:
+        return None, False
 
-    # Strategy 3: Otsu threshold (auto-finds best threshold)
-    _, otsu_thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    otsu_thresh = cv2.morphologyEx(otsu_thresh, cv2.MORPH_CLOSE, kernel)
+    # Get largest contour
+    largest = max(contours, key=cv2.contourArea)
 
-    contour = find_largest_quad(otsu_thresh, min_area)
-    if contour is not None:
-        return contour, True
+    if cv2.contourArea(largest) < min_area:
+        return None, False
 
-    return None, False
+    # Get minimum area bounding rectangle
+    rect = cv2.minAreaRect(largest)
+    box = cv2.boxPoints(rect)
+    box = np.array(box, dtype=np.float32)
+
+    return box, True
 
 
 async def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
