@@ -144,9 +144,6 @@ def find_largest_quad(edge_image: np.ndarray, min_area: float) -> np.ndarray | N
 
 
 def find_document_contour(image: np.ndarray) -> tuple[np.ndarray | None, bool]:
-    """
-    Find document contour using multiple detection strategies
-    """
     height, width = image.shape[:2]
     image_area = height * width
     min_area = image_area * 0.10
@@ -154,21 +151,30 @@ def find_document_contour(image: np.ndarray) -> tuple[np.ndarray | None, bool]:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Strategy 1: Standard Canny
+    # Strategy 1: Brightness threshold (white paper on dark background)
+    _, bright_thresh = cv2.threshold(blurred, 150, 255, cv2.THRESH_BINARY)
+    kernel = np.ones((5, 5), np.uint8)
+    bright_thresh = cv2.morphologyEx(bright_thresh, cv2.MORPH_CLOSE, kernel)
+    bright_thresh = cv2.morphologyEx(bright_thresh, cv2.MORPH_OPEN, kernel)
+
+    contour = find_largest_quad(bright_thresh, min_area)
+    if contour is not None:
+        return contour, True
+
+    # Strategy 2: Standard Canny
     edges = cv2.Canny(blurred, 50, 150)
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=1)
+    kernel_small = np.ones((3, 3), np.uint8)
+    edges = cv2.dilate(edges, kernel_small, iterations=1)
 
     contour = find_largest_quad(edges, min_area)
     if contour is not None:
         return contour, True
 
-    # Strategy 2: Aggressive Canny (skip adaptive threshold - too slow)
-    edges2 = cv2.Canny(blurred, 30, 100)
-    kernel_large = np.ones((5, 5), np.uint8)
-    edges2 = cv2.morphologyEx(edges2, cv2.MORPH_CLOSE, kernel_large)
+    # Strategy 3: Otsu threshold (auto-finds best threshold)
+    _, otsu_thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    otsu_thresh = cv2.morphologyEx(otsu_thresh, cv2.MORPH_CLOSE, kernel)
 
-    contour = find_largest_quad(edges2, min_area)
+    contour = find_largest_quad(otsu_thresh, min_area)
     if contour is not None:
         return contour, True
 
