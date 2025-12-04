@@ -429,17 +429,22 @@ def find_document_contour(image: np.ndarray) -> DetectionResult:
             contour = detect_func()
             if contour is not None:
                 is_valid, confidence = validate_quadrilateral(contour, image.shape)
+                print(f"Strategy {method_name}: contour={'found' if contour is not None else 'none'}, valid={is_valid}, confidence={confidence}")
                 if is_valid and confidence > best_result.confidence:
                     best_result = DetectionResult(contour, confidence, method_name)
-                    
+
                     # If we found a high-confidence result, use it immediately
                     if confidence >= 0.8:
+                        print(f"Final detection result: confidence={best_result.confidence}, method={best_result.method}")
                         return best_result
+            else:
+                print(f"Strategy {method_name}: contour='none', valid=False, confidence=0.0")
         except Exception as e:
             # Log but continue with other strategies
             print(f"Detection strategy {method_name} failed: {e}")
             continue
-    
+
+    print(f"Final detection result: confidence={best_result.confidence}, method={best_result.method}")
     return best_result
 
 
