@@ -125,41 +125,128 @@ def apply_color_mode(image: np.ndarray, color_mode: str) -> np.ndarray:
         return image
 
 
+def find_largest_quad_with_hull(edge_image: np.ndarray, min_area: float, padding: int = 0) -> np.ndarray | None:
+    """Find largest 4-sided contour, using convex hull if needed"""
+    contours, _ = cv2.findContours(edge_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < min_area:
+            continue
+
+        # Try direct approximation first
+        peri = cv2.arcLength(contour, True)
+        for eps in [0.02, 0.04, 0.06]:
+            approx = cv2.approxPolyDP(contour, eps * peri, True)
+            if len(approx) == 4:
+                return approx.reshape(4, 2).astype(np.float32)
+
+        # Try convex hull if direct approx fails
+        hull = cv2.convexHull(contour)
+        peri = cv2.arcLength(hull, True)
+        for eps in [0.02, 0.04, 0.06]:
+            approx = cv2.approxPolyDP(hull, eps * peri, True)
+            if len(approx) == 4:
+                return approx.reshape(4, 2).astype(np.float32)
+
+        # Last resort: minAreaRect
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect)
+        return box.astype(np.float32)
+
+    return None
+
+
+def find_document_from_lines(edges: np.ndarray, width: int, height: int, min_area: float) -> np.ndarray | None:
+    """Use HoughLines to detect document edges and find corners"""
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=80, minLineLength=min(width, height)//4, maxLineGap=20)
+
+    if lines is None or len(lines) < 4:
+        return None
+
+    # Separate horizontal and vertical lines
+    horizontal = []
+    vertical = []
+
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
+
+        if angle < 30 or angle > 150:  # Horizontal
+            horizontal.append((y1 + y2) // 2)
+        elif 60 < angle < 120:  # Vertical
+            vertical.append((x1 + x2) // 2)
+
+    if len(horizontal) < 2 or len(vertical) < 2:
+        return None
+
+    # Find extreme lines (document edges)
+    horizontal = sorted(horizontal)
+    vertical = sorted(vertical)
+
+    top = horizontal[0]
+    bottom = horizontal[-1]
+    left = vertical[0]
+    right = vertical[-1]
+
+    # Check if rectangle is large enough
+    rect_area = (right - left) * (bottom - top)
+    if rect_area < min_area:
+        return None
+
+    # Return corners
+    return np.array([
+        [left, top],
+        [right, top],
+        [right, bottom],
+        [left, bottom]
+    ], dtype=np.float32)
+
+
+def adjust_contour_for_padding(contour: np.ndarray, padding: int) -> np.ndarray:
+    """Subtract padding offset from contour coordinates"""
+    return contour - padding
+
+
 def find_document_contour(image: np.ndarray) -> tuple[np.ndarray | None, bool]:
-    """Find document using largest bright region"""
+    """Find document using multiple fast strategies"""
     height, width = image.shape[:2]
     image_area = height * width
-    min_area = image_area * 0.15  # Document must be at least 15% of image
+    min_area = image_area * 0.15
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Add 5px border (fixes edge detection when doc touches image edge)
+    padded = cv2.copyMakeBorder(image, 5, 5, 5, 5, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+
+    gray = cv2.cvtColor(padded, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Find bright regions (white paper)
+    # Strategy 1: Otsu threshold + strong morphology
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # Clean up
-    kernel = np.ones((7, 7), np.uint8)
+    kernel = np.ones((9, 9), np.uint8)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
-    # Find contours
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contour = find_largest_quad_with_hull(thresh, min_area, 5)
+    if contour is not None:
+        return adjust_contour_for_padding(contour, 5), True
 
-    if not contours:
-        return None, False
+    # Strategy 2: Canny with strong dilation to connect edges
+    edges = cv2.Canny(blurred, 50, 150)
+    dilate_kernel = np.ones((5, 5), np.uint8)
+    edges = cv2.dilate(edges, dilate_kernel, iterations=2)
 
-    # Get largest contour
-    largest = max(contours, key=cv2.contourArea)
+    contour = find_largest_quad_with_hull(edges, min_area, 5)
+    if contour is not None:
+        return adjust_contour_for_padding(contour, 5), True
 
-    if cv2.contourArea(largest) < min_area:
-        return None, False
+    # Strategy 3: HoughLines to find document edges
+    edges2 = cv2.Canny(blurred, 30, 100)
+    contour = find_document_from_lines(edges2, width + 10, height + 10, min_area)
+    if contour is not None:
+        return adjust_contour_for_padding(contour, 5), True
 
-    # Get minimum area bounding rectangle
-    rect = cv2.minAreaRect(largest)
-    box = cv2.boxPoints(rect)
-    box = np.array(box, dtype=np.float32)
-
-    return box, True
+    return None, False
 
 
 async def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
