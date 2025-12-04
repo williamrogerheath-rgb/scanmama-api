@@ -645,7 +645,20 @@ async def process_document(image_bytes: bytes, options: ScanOptions) -> dict:
     
     # Find document contour
     detection_result = find_document_contour(detection_image)
-    
+
+    # Debug logging
+    image_area = original_height * original_width
+    print(f"Image size: {original_width}x{original_height}")
+    print(f"Detection: confidence={detection_result.confidence}, method={detection_result.method}")
+    if detection_result.contour is not None:
+        # Scale contour to original size for logging
+        contour_for_logging = detection_result.contour.copy()
+        if scale_factor < 1.0:
+            contour_for_logging = contour_for_logging / scale_factor
+        print(f"Contour points: {contour_for_logging.tolist()}")
+        contour_area = cv2.contourArea(contour_for_logging)
+        print(f"Contour area: {contour_area/image_area*100:.1f}% of image")
+
     document_detected = False
     if detection_result.contour is not None and detection_result.confidence >= 0.5:
         # Scale contour back to original size
