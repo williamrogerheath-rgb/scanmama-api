@@ -129,6 +129,7 @@ def validate_quadrilateral(contour: np.ndarray, image_shape: Tuple[int, int]) ->
 def find_quad_from_contour(contour: np.ndarray, min_area: float) -> Optional[np.ndarray]:
     """
     Try to extract a quadrilateral from a contour using multiple epsilon values
+    Accepts 4-6 point approximations (uses minAreaRect for 5-6 points to handle noisy edges)
     """
     area = cv2.contourArea(contour)
     if area < min_area:
@@ -139,18 +140,30 @@ def find_quad_from_contour(contour: np.ndarray, min_area: float) -> Optional[np.
     # Try different approximation accuracies
     for eps in [0.02, 0.03, 0.04, 0.05, 0.06]:
         approx = cv2.approxPolyDP(contour, eps * peri, True)
-        if len(approx) == 4:
-            return approx.reshape(4, 2).astype(np.float32)
+        if 4 <= len(approx) <= 6:
+            if len(approx) == 4:
+                return approx.reshape(4, 2).astype(np.float32)
+            else:
+                # More than 4 points - find the minimum area bounding rectangle
+                rect = cv2.minAreaRect(approx)
+                quad = cv2.boxPoints(rect)
+                return np.array(quad, dtype=np.float32)
     
     # Try convex hull if direct approximation fails
     hull = cv2.convexHull(contour)
     hull_peri = cv2.arcLength(hull, True)
-    
+
     for eps in [0.02, 0.03, 0.04, 0.05]:
         approx = cv2.approxPolyDP(hull, eps * hull_peri, True)
-        if len(approx) == 4:
-            return approx.reshape(4, 2).astype(np.float32)
-    
+        if 4 <= len(approx) <= 6:
+            if len(approx) == 4:
+                return approx.reshape(4, 2).astype(np.float32)
+            else:
+                # More than 4 points - find the minimum area bounding rectangle
+                rect = cv2.minAreaRect(approx)
+                quad = cv2.boxPoints(rect)
+                return np.array(quad, dtype=np.float32)
+
     return None
 
 
