@@ -18,6 +18,12 @@ class ScanRequest(BaseModel):
     options: Optional[ScanOptions] = Field(default_factory=ScanOptions)
 
 
+class MultiScanRequest(BaseModel):
+    """Request body for POST /v1/scan/multi"""
+    images: list[str] = Field(..., description="Array of base64 encoded image data", min_length=1, max_length=50)
+    options: Optional[ScanOptions] = Field(default_factory=ScanOptions)
+
+
 class UsageInfo(BaseModel):
     """Usage information for a user"""
     plan: str
@@ -39,6 +45,16 @@ class ScanResult(BaseModel):
     height: int
     processingTimeMs: int
     documentDetected: bool
+    usage: UsageInfo
+
+
+class MultiScanResult(BaseModel):
+    """Response body for successful multi-page scan"""
+    scanId: str
+    status: str
+    pdfUrl: str
+    pageCount: int
+    processingTimeMs: int
     usage: UsageInfo
 
 

@@ -2,6 +2,9 @@
 Scan endpoints - document processing
 """
 import uuid
+import time
+import img2pdf
+import io
 from fastapi import APIRouter, Header, HTTPException
 from supabase import create_client
 
@@ -9,6 +12,8 @@ from app.config import Config
 from app.models.schemas import (
     ScanRequest,
     ScanResult,
+    MultiScanRequest,
+    MultiScanResult,
     ErrorResponse,
     ErrorDetail,
     UsageInfo
@@ -209,6 +214,227 @@ async def create_scan(
         height=processed["height"],
         processingTimeMs=processed["processing_time_ms"],
         documentDetected=processed["document_detected"],
+        usage=UsageInfo(**usage_info)
+    )
+
+
+@router.post("/scan/multi", response_model=MultiScanResult)
+async def create_multi_scan(
+    request: MultiScanRequest,
+    authorization: str = Header(None)
+):
+    """
+    Process multiple document scans into a single multi-page PDF
+    Requires: Authorization header with API key
+    Counts as ONE scan for billing regardless of page count
+    """
+    start_time = time.time()
+
+    # Validate API key
+    api_key = get_api_key_from_header(authorization)
+    result = await validate_api_key(api_key)
+
+    if not result:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": {
+                    "code": "invalid_api_key",
+                    "message": "Invalid API key",
+                }
+            }
+        )
+
+    api_key_record, user_record = result
+    plan = user_record.get("plan", "trial")
+    page_count = len(request.images)
+
+    # Check if user has enough scans for all images
+    can_scan, is_overage = check_scan_allowance(user_record)
+
+    if not can_scan:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": "trial_expired",
+                    "message": "Your trial has expired. Upgrade to Pro for 500 scans/month.",
+                    "upgradeUrl": f"{Config.API_BASE_URL}/dashboard/billing",
+                    "details": {
+                        "trialScansUsed": 10,
+                        "trialScansLimit": 10
+                    }
+                }
+            }
+        )
+
+    # Process each image
+    processed_images = []
+    total_size = 0
+
+    for idx, image_base64 in enumerate(request.images):
+        # Decode image
+        try:
+            image_bytes = decode_base64_image(image_base64)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "invalid_image",
+                        "message": f"Invalid base64 image data at index {idx}",
+                    }
+                }
+            )
+
+        # Check file size
+        if len(image_bytes) > Config.MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "file_too_large",
+                        "message": f"Image at index {idx} exceeds maximum size of {Config.MAX_FILE_SIZE / 1024 / 1024}MB",
+                    }
+                }
+            )
+
+        total_size += len(image_bytes)
+
+        # Process document
+        try:
+            processed = await process_document(image_bytes, request.options)
+            processed_images.append(processed)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": "processing_failed",
+                        "message": f"Failed to process image at index {idx}: {str(e)}",
+                    }
+                }
+            )
+
+    # Merge all processed images into a single multi-page PDF using img2pdf
+    try:
+        # Collect all processed image bytes
+        image_bytes_list = [img["processed_bytes"] for img in processed_images]
+
+        # Use img2pdf to create multi-page PDF
+        pdf_bytes = img2pdf.convert(image_bytes_list)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": "pdf_generation_failed",
+                    "message": f"Failed to generate multi-page PDF: {str(e)}",
+                }
+            }
+        )
+
+    # Generate scan ID
+    scan_id = str(uuid.uuid4())
+
+    # Upload multi-page PDF to storage
+    try:
+        # We'll store only the merged PDF for multi-page scans
+        from app.services.storage import get_signed_url
+        from supabase import create_client
+
+        supabase_storage = create_client(Config.SUPABASE_URL, Config.SUPABASE_SERVICE_KEY)
+        bucket = Config.STORAGE_BUCKET
+
+        # Upload PDF
+        pdf_path = f"{scan_id}/document.pdf"
+        supabase_storage.storage.from_(bucket).upload(
+            pdf_path,
+            pdf_bytes,
+            {"content-type": "application/pdf"}
+        )
+
+        # Get signed URL
+        pdf_url = await get_signed_url(bucket, pdf_path)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": "storage_error",
+                    "message": f"Failed to upload PDF: {str(e)}",
+                }
+            }
+        )
+
+    # Record scan in database
+    supabase = get_supabase_client()
+
+    try:
+        # Calculate total processing time
+        total_processing_time = sum(img["processing_time_ms"] for img in processed_images)
+
+        # Insert scan record for the multi-page scan
+        scan_data = {
+            "id": scan_id,
+            "user_id": user_record["id"],
+            "api_key_id": api_key_record["id"],
+            "status": "complete",
+            "is_overage": is_overage,
+            "output_format": "pdf",
+            "quality": request.options.quality,
+            "file_size_bytes": len(pdf_bytes),
+            "processing_time_ms": total_processing_time,
+            "pdf_storage_path": pdf_path,
+            "page_count": page_count,
+        }
+
+        supabase.table("scans").insert(scan_data).execute()
+
+        # Update user scan count - count entire multi-page scan as ONE scan
+        if plan == "trial":
+            supabase.table("users").update({
+                "trial_scans_remaining": user_record["trial_scans_remaining"] - 1
+            }).eq("id", user_record["id"]).execute()
+        else:
+            supabase.table("users").update({
+                "current_period_scans": user_record["current_period_scans"] + 1
+            }).eq("id", user_record["id"]).execute()
+
+        # Update daily usage aggregate - count as ONE scan
+        from datetime import date
+        today = date.today().isoformat()
+
+        supabase.rpc("upsert_daily_usage", {
+            "p_user_id": user_record["id"],
+            "p_date": today,
+            "p_scan_count": 1,
+            "p_overage_count": 1 if is_overage else 0
+        }).execute()
+
+    except Exception as e:
+        print(f"Error recording multi-scan: {e}")
+        # Don't fail the request if database update fails
+
+    # Calculate updated usage info - multi-scan counts as ONE scan
+    if plan == "trial":
+        user_record["trial_scans_remaining"] -= 1
+    else:
+        user_record["current_period_scans"] += 1
+
+    usage_info = calculate_usage_info(user_record, is_overage)
+
+    # Calculate total processing time including merging
+    total_time_ms = int((time.time() - start_time) * 1000)
+
+    # Return result
+    return MultiScanResult(
+        scanId=scan_id,
+        status="complete",
+        pdfUrl=pdf_url,
+        pageCount=page_count,
+        processingTimeMs=total_time_ms,
         usage=UsageInfo(**usage_info)
     )
 
