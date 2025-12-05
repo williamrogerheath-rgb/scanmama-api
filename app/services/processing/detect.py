@@ -183,7 +183,7 @@ def detect_mode(
     mode: str,
     area_range: Tuple[float, float],
     aspect_range: Tuple[float, float],
-    confidence_threshold: float = 0.6,
+    confidence_threshold: float = 0.5,
     debug: bool = False
 ) -> Optional[DetectionResult]:
     """Try 4 preprocessing variants with adaptive epsilon fallback"""

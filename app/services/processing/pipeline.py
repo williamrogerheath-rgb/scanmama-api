@@ -90,13 +90,18 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
         detection_confidence = detection_result.confidence
 
         # Step 2: Transform perspective if detected with sufficient confidence
-        if detection_confidence >= 0.5:
+        # Lower threshold to 0.4 to catch more valid detections
+        if detection_confidence >= 0.4 and detection_result.mode != "fallback":
             document_detected = True
 
             transformed = transform(image, detection_result.corners)
             if transformed is not None:
                 processed = transformed
-            # If transform fails, fall back to original image
+                print(f"Document transformed: confidence={detection_confidence:.3f}, method={detection_method}")
+            else:
+                print(f"Transform failed: confidence={detection_confidence:.3f}, falling back to original")
+        else:
+            print(f"Detection too low: confidence={detection_confidence:.3f}, mode={detection_result.mode}")
 
     except Exception as e:
         # Detection failed - use original image
