@@ -49,16 +49,16 @@ def apply_color_mode(image: np.ndarray, mode: str) -> np.ndarray:
 
 def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     """
-    Main document processing pipeline
+    Simplified document processing pipeline (MVP)
 
     Pipeline:
     1. Decode image
     2. Store original
-    3. Detect document corners
-    4. Transform perspective (if detected)
-    5. Enhance image quality
-    6. Apply color mode
-    7. Generate PDF
+    3. Enhance image quality (gentle CLAHE only)
+    4. Apply color mode
+    5. Generate PDF
+
+    No document detection/cropping - just enhance what the user photographed.
 
     Returns:
         Dict with original_bytes, processed_bytes, pdf_bytes, metadata
@@ -77,47 +77,41 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     _, original_jpg = cv2.imencode('.jpg', image, encode_params)
     original_bytes = original_jpg.tobytes()
 
-    # Initialize tracking variables
+    # Initialize tracking variables - detection skipped for MVP
     document_detected = False
-    detection_method = "none"
+    detection_method = "skipped"
     detection_confidence = 0.0
     processed = image.copy()
 
-    try:
-        # Step 1: Detect document corners
-        detection_result = detect(image, debug=False)
-        detection_method = detection_result.method
-        detection_confidence = detection_result.confidence
-
-        # Step 2: Transform perspective if detected with sufficient confidence
-        # Lower threshold to 0.4 to catch more valid detections
-        if detection_confidence >= 0.4 and detection_result.mode != "fallback":
-            document_detected = True
-
-            transformed = transform(image, detection_result.corners)
-            if transformed is not None:
-                processed = transformed
-                print(f"Document transformed: confidence={detection_confidence:.3f}, method={detection_method}")
-            else:
-                print(f"Transform failed: confidence={detection_confidence:.3f}, falling back to original")
-        else:
-            print(f"Detection too low: confidence={detection_confidence:.3f}, mode={detection_result.mode}")
-
-    except Exception as e:
-        # Detection failed - use original image
-        print(f"Detection error: {e}")
-        pass
+    # DETECTION & TRANSFORM SKIPPED FOR MVP
+    # Detection was failing on dark surfaces and cropping incorrectly
+    # For MVP, just enhance the full image as photographed
+    #
+    # try:
+    #     detection_result = detect(image, debug=False)
+    #     detection_method = detection_result.method
+    #     detection_confidence = detection_result.confidence
+    #
+    #     if detection_confidence >= 0.4 and detection_result.mode != "fallback":
+    #         document_detected = True
+    #         transformed = transform(image, detection_result.corners)
+    #         if transformed is not None:
+    #             processed = transformed
+    # except Exception as e:
+    #     print(f"Detection error: {e}")
+    #     pass
 
     try:
-        # Step 3: Enhance image quality
+        # Step 1: Enhance image quality (gentle CLAHE only)
         processed = enhance(processed)
+        print(f"Image enhanced: {processed.shape[1]}x{processed.shape[0]}")
     except Exception as e:
-        # Enhancement failed - use previous result
+        # Enhancement failed - use original
         print(f"Enhancement error: {e}")
         pass
 
     try:
-        # Step 4: Apply color mode
+        # Step 2: Apply color mode
         processed = apply_color_mode(processed, options.colorMode)
     except Exception as e:
         # Color mode failed - use previous result
