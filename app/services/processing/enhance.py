@@ -119,19 +119,43 @@ def sharpen(image: np.ndarray, strength: float = 0.3) -> np.ndarray:
 
 def enhance(image: np.ndarray) -> np.ndarray:
     """
-    Minimal enhancement - just gentle CLAHE, no shadow removal.
-    The aggressive enhancement was destroying image quality.
+    Intelligent image enhancement with conditional shadow removal
+
+    Analyzes lighting and applies appropriate enhancements:
+    1. Analyze lighting variation
+    2. Apply shadow removal if needed (variation > 50)
+    3. Apply gentle CLAHE for contrast
+    4. Apply subtle sharpening
     """
-    # Convert to LAB
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
+    # Step 1: Analyze lighting
+    variation, recommendation = analyze_lighting(image)
+    print(f"Enhancement: lighting variation={variation:.1f}, recommendation={recommendation}")
 
-    # Very gentle CLAHE only
-    clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
-    l = clahe.apply(l)
+    result = image.copy()
+    steps_applied = []
 
-    # Merge and convert back
-    lab = cv2.merge([l, a, b])
-    result = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    # Step 2: Shadow removal (only if strong shadows detected)
+    if recommendation == "full" and variation > 50:
+        print(f"  Applying shadow removal (variation={variation:.1f} > 50)")
+        result = remove_shadows(result, strength="full")
+        steps_applied.append("shadow_removal")
+    elif recommendation == "gentle" and variation > 35:
+        print(f"  Applying gentle shadow removal (variation={variation:.1f} > 35)")
+        result = remove_shadows(result, strength="gentle")
+        steps_applied.append("gentle_shadow_removal")
+    else:
+        print(f"  Skipping shadow removal (variation={variation:.1f} is low)")
+
+    # Step 3: Gentle CLAHE for contrast
+    print(f"  Applying gentle CLAHE")
+    result = apply_clahe(result, clip_limit=1.5)
+    steps_applied.append("clahe")
+
+    # Step 4: Subtle sharpening
+    print(f"  Applying subtle sharpening")
+    result = sharpen(result, strength=0.3)
+    steps_applied.append("sharpen")
+
+    print(f"  Enhancement complete: {', '.join(steps_applied)}")
 
     return result

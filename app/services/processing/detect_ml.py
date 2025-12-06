@@ -80,17 +80,19 @@ def detect(image: np.ndarray, debug: bool = False) -> DetectionResult:
         corners = np.array(polygon, dtype=np.float32)
 
         if corners.shape != (4, 2):
-            print(f"Invalid corner shape: {corners.shape}, expected (4, 2)")
-            raise ValueError(f"Invalid corner shape: {corners.shape}")
+            print(f"Partial detection: got {corners.shape[0]} corners instead of 4")
+            print(f"This usually means document is partially visible or occluded")
+            raise ValueError(f"Partial detection: {corners.shape[0]} corners")
 
         # Ensure corners are properly ordered (TL, TR, BR, BL)
         corners = order_points(corners)
 
-        # Calculate confidence score using document mode ranges
+        # Calculate confidence score using permissive ranges
         # DocAligner doesn't provide confidence, so we calculate it based on
         # geometric properties (area, aspect ratio, convexity, edge completeness)
-        area_range = (0.20, 0.95)  # Document mode: 20-95% of image
-        aspect_range = (0.5, 2.0)  # Document mode: standard aspect ratios
+        # Use wide ranges to support both documents (20-95%) and ID cards (5-30%)
+        area_range = (0.05, 0.95)  # Accept 5-95% of image (ID cards to full documents)
+        aspect_range = (0.3, 3.0)  # Permissive aspect ratios (portrait/landscape/square)
         confidence = calculate_confidence(corners, (h, w), area_range, aspect_range)
 
         # Calculate area percentage for logging
@@ -102,7 +104,14 @@ def detect(image: np.ndarray, debug: bool = False) -> DetectionResult:
         avg_height = (np.linalg.norm(bl - tl) + np.linalg.norm(br - tr)) / 2
         aspect = avg_width / avg_height if avg_height > 0 else 0
 
+        # Determine document type based on area
+        if area_pct < 30:
+            doc_type = "ID card/small document"
+        else:
+            doc_type = "full document"
+
         print(f"Detection successful:")
+        print(f"  Type: {doc_type}")
         print(f"  Area: {area_pct:.1f}% of image")
         print(f"  Aspect ratio: {aspect:.2f}")
         print(f"  Confidence: {confidence:.3f}")
@@ -111,7 +120,7 @@ def detect(image: np.ndarray, debug: bool = False) -> DetectionResult:
         return DetectionResult(
             corners=corners,
             confidence=confidence,
-            mode="ml_document",
+            mode="ml_detection",
             method="docaligner"
         )
 
