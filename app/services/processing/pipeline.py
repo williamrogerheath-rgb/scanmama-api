@@ -13,7 +13,7 @@ import img2pdf
 from typing import Dict
 
 from app.models.schemas import ScanOptions
-from .detect import detect
+from .detect_ml import detect
 from .transform import transform
 from .enhance import enhance
 

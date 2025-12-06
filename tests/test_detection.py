@@ -23,7 +23,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.services.processing.detect import detect
+from app.services.processing.detect_ml import detect
 
 
 # Test image mapping: (filename, expected_mode, description)

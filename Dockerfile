@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download DocAligner model weights during build
+RUN python -c "from docaligner import DocAligner; print('Downloading DocAligner weights...'); model = DocAligner(); print('Weights downloaded successfully')"
+
 COPY . .
 
 CMD uvicorn main:app --host 0.0.0.0 --port $PORT
