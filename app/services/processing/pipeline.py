@@ -47,37 +47,51 @@ def apply_color_mode(image: np.ndarray, mode: str) -> np.ndarray:
         return image
 
 
-def auto_trim_margins(image: np.ndarray, padding: int = 20) -> np.ndarray:
-    """Trim obvious uniform margins from image edges."""
+def auto_trim_margins(image: np.ndarray, padding: int = 30) -> np.ndarray:
+    """Trim margins that are nearly uniform color."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
 
-    # Calculate variance for each row and column
-    row_var = np.var(gray, axis=1)
-    col_var = np.var(gray, axis=0)
+    # For each edge, check if rows/cols are nearly uniform
+    # A row/col is "uniform" if its std dev is very low
 
-    # Find where content exists (variance above threshold)
-    threshold = np.mean(row_var) * 0.1  # 10% of mean variance
+    def find_content_start(values_2d, axis):
+        """Find where content starts from the beginning."""
+        std_per_line = np.std(values_2d, axis=axis)
+        # Uniform = std dev < 15 (out of 255)
+        uniform_threshold = 15
+        for i, std in enumerate(std_per_line):
+            if std > uniform_threshold:
+                return i
+        return 0
 
-    rows_with_content = np.where(row_var > threshold)[0]
-    cols_with_content = np.where(col_var > threshold)[0]
+    def find_content_end(values_2d, axis):
+        """Find where content ends."""
+        std_per_line = np.std(values_2d, axis=axis)
+        uniform_threshold = 15
+        for i in range(len(std_per_line) - 1, -1, -1):
+            if std_per_line[i] > uniform_threshold:
+                return i + 1
+        return len(std_per_line)
 
-    if len(rows_with_content) == 0 or len(cols_with_content) == 0:
-        return image  # No trimming possible
+    # Find bounds
+    top = find_content_start(gray, axis=1)  # std of each row
+    bottom = find_content_end(gray, axis=1)
+    left = find_content_start(gray, axis=0)  # std of each column
+    right = find_content_end(gray, axis=0)
 
-    # Get bounds with padding
-    top = max(0, rows_with_content[0] - padding)
-    bottom = min(image.shape[0], rows_with_content[-1] + padding)
-    left = max(0, cols_with_content[0] - padding)
-    right = min(image.shape[1], cols_with_content[-1] + padding)
+    # Apply padding
+    top = max(0, top - padding)
+    bottom = min(h, bottom + padding)
+    left = max(0, left - padding)
+    right = min(w, right + padding)
 
-    # Only crop if we're removing significant margins (>5% per side)
-    min_crop = 0.05
-    if (top < image.shape[0] * min_crop and
-        bottom > image.shape[0] * (1 - min_crop) and
-        left < image.shape[1] * min_crop and
-        right > image.shape[1] * (1 - min_crop)):
-        return image  # Not enough to trim
+    # Only crop if we're actually removing something meaningful (>3% of image)
+    if top < h * 0.03 and bottom > h * 0.97 and left < w * 0.03 and right > w * 0.97:
+        print(f"Auto-trim: no significant margins found")
+        return image
 
+    print(f"Auto-trim: cropping from ({left},{top}) to ({right},{bottom}) - original {w}x{h}")
     return image[top:bottom, left:right]
 
 
