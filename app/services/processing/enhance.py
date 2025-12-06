@@ -117,15 +117,19 @@ def sharpen(image: np.ndarray, strength: float = 0.3) -> np.ndarray:
     return sharpened
 
 
-def enhance(image: np.ndarray) -> np.ndarray:
+def enhance(image: np.ndarray, skip_shadow_removal: bool = False) -> np.ndarray:
     """
     Intelligent image enhancement with conditional shadow removal
 
     Analyzes lighting and applies appropriate enhancements:
     1. Analyze lighting variation
-    2. Apply shadow removal if needed (variation > 50)
+    2. Apply shadow removal if needed (variation > 50) and not skipped
     3. Apply gentle CLAHE for contrast
     4. Apply subtle sharpening
+
+    Args:
+        image: Input image
+        skip_shadow_removal: If True, skip shadow removal (e.g., for ID cards)
     """
     # Step 1: Analyze lighting
     variation, recommendation = analyze_lighting(image)
@@ -134,8 +138,10 @@ def enhance(image: np.ndarray) -> np.ndarray:
     result = image.copy()
     steps_applied = []
 
-    # Step 2: Shadow removal (only if strong shadows detected)
-    if recommendation == "full" and variation > 70:
+    # Step 2: Shadow removal (only if strong shadows detected and not skipped)
+    if skip_shadow_removal:
+        print(f"  Skipping shadow removal (disabled for this document type)")
+    elif recommendation == "full" and variation > 70:
         print(f"  Applying shadow removal (variation={variation:.1f} > 70)")
         result = remove_shadows(result, strength="full")
         steps_applied.append("shadow_removal")

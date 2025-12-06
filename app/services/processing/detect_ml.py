@@ -8,10 +8,13 @@ Drop-in replacement for traditional CV-based detect.py
 """
 import numpy as np
 import cv2
+import logging
 from typing import Optional
 
 # Import DetectionResult and utilities from existing detect module
 from .detect import DetectionResult, order_points, calculate_confidence
+
+logger = logging.getLogger(__name__)
 
 
 class DocAlignerDetector:
@@ -80,9 +83,25 @@ def detect(image: np.ndarray, debug: bool = False) -> DetectionResult:
         corners = np.array(polygon, dtype=np.float32)
 
         if corners.shape != (4, 2):
-            print(f"Partial detection: got {corners.shape[0]} corners instead of 4")
+            # Detailed logging for 3-corner detections
+            num_corners = corners.shape[0] if hasattr(corners, 'shape') else len(corners)
+            logger.info(f"Partial detection raw data:")
+            logger.info(f"  Corners received: {corners}")
+            logger.info(f"  Corner shape: {corners.shape if hasattr(corners, 'shape') else len(corners)}")
+            logger.info(f"  Image size: {w}x{h}")
+
+            # Log individual corner coordinates if available
+            if num_corners >= 3:
+                for i, corner in enumerate(corners):
+                    logger.info(f"  Corner {i}: x={corner[0]:.1f}, y={corner[1]:.1f}")
+
+            # Check if DocAligner provides any confidence scores
+            if hasattr(polygon, 'confidence'):
+                logger.info(f"  Confidence scores: {polygon.confidence}")
+
+            print(f"Partial detection: got {num_corners} corners instead of 4")
             print(f"This usually means document is partially visible or occluded")
-            raise ValueError(f"Partial detection: {corners.shape[0]} corners")
+            raise ValueError(f"Partial detection: {num_corners} corners")
 
         # Ensure corners are properly ordered (TL, TR, BR, BL)
         corners = order_points(corners)
