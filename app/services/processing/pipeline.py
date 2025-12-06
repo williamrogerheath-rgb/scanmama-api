@@ -5,13 +5,13 @@ Orchestrates detection, transformation, and enhancement to convert
 document photos into clean, high-resolution scans.
 """
 import time
+import io
 import base64
-from typing import Dict, List
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 import numpy as np
 import cv2
 import img2pdf
+from typing import Dict, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.models.schemas import ScanOptions
 from .detect_ml import detect
