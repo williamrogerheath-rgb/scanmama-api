@@ -14,7 +14,8 @@ from typing import Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.models.schemas import ScanOptions
-from .detect_ml import detect
+from .detect_ml import detect as detect_ml
+from .detect import detect as detect_cv
 from .transform import transform
 from .enhance import enhance
 
@@ -139,20 +140,66 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     _, original_jpg = cv2.imencode('.jpg', image, encode_params)
     original_bytes = original_jpg.tobytes()
 
-    # Step 1: ML Document Detection
-    try:
-        detection_result = detect(image)
-        document_detected = detection_result.confidence > 0.5 and detection_result.mode != "fallback"
-        detection_method = detection_result.method
-        detection_confidence = detection_result.confidence
+    # Step 1: Hybrid Document Detection (ML + CV fallback)
+    ml_result = None
+    cv_result = None
 
-        print(f"Detection result: detected={document_detected}, confidence={detection_confidence:.3f}, method={detection_method}")
+    # Try ML detection first (great for ID cards)
+    try:
+        print("\n=== Trying ML Detection (DocAligner) ===")
+        ml_result = detect_ml(image)
+        ml_success = ml_result.confidence > 0.5 and ml_result.mode != "fallback"
+        print(f"ML Detection: confidence={ml_result.confidence:.3f}, mode={ml_result.mode}, method={ml_result.method}")
+
+        # Check if ML returned 3 corners (partial detection)
+        if ml_result.corners is not None and len(ml_result.corners) != 4:
+            print(f"ML Detection returned {len(ml_result.corners)} corners (need 4), will try CV fallback")
+            ml_success = False
     except Exception as e:
-        print(f"Detection error: {e}")
-        document_detected = False
-        detection_method = "error"
-        detection_confidence = 0.0
-        detection_result = None
+        print(f"ML Detection error: {e}")
+        ml_success = False
+        ml_result = None
+
+    # Try CV detection if ML failed or had low confidence
+    if not ml_success or (ml_result and ml_result.confidence < 0.5):
+        try:
+            print("\n=== Trying CV Detection (fallback for full-page documents) ===")
+            cv_result = detect_cv(image)
+            cv_success = cv_result.confidence > 0.5 and cv_result.mode != "fallback"
+            print(f"CV Detection: confidence={cv_result.confidence:.3f}, mode={cv_result.mode}, method={cv_result.method}")
+        except Exception as e:
+            print(f"CV Detection error: {e}")
+            cv_success = False
+            cv_result = None
+
+    # Choose best result
+    if ml_result and cv_result:
+        # Both succeeded - use higher confidence
+        if ml_result.confidence >= cv_result.confidence:
+            detection_result = ml_result
+            print(f"\n>>> SELECTED: ML detection (confidence {ml_result.confidence:.3f} >= {cv_result.confidence:.3f})")
+        else:
+            detection_result = cv_result
+            print(f"\n>>> SELECTED: CV detection (confidence {cv_result.confidence:.3f} > {ml_result.confidence:.3f})")
+    elif ml_result:
+        detection_result = ml_result
+        print(f"\n>>> SELECTED: ML detection (CV not attempted)")
+    elif cv_result:
+        detection_result = cv_result
+        print(f"\n>>> SELECTED: CV detection (ML failed)")
+    else:
+        # Both failed - use fallback
+        print(f"\n>>> FALLBACK: Both ML and CV detection failed")
+        h, w = image.shape[:2]
+        corners = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
+        from .detect import DetectionResult
+        detection_result = DetectionResult(corners=corners, confidence=0.0, mode="fallback", method="none")
+
+    document_detected = detection_result.confidence > 0.5 and detection_result.mode != "fallback"
+    detection_method = detection_result.method
+    detection_confidence = detection_result.confidence
+
+    print(f"\nFinal: detected={document_detected}, confidence={detection_confidence:.3f}, method={detection_method}")
 
     # Step 2: Transform or Auto-trim
     processed = image.copy()
