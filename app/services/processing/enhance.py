@@ -20,8 +20,8 @@ def analyze_lighting(image: np.ndarray) -> Tuple[float, str]:
     Returns:
         (variation_score, recommendation)
         - variation < 25: "none" (uniform lighting)
-        - variation 25-50: "gentle" (moderate shadows)
-        - variation > 50: "full" (strong shadows)
+        - variation 25-70: "gentle" (moderate shadows)
+        - variation > 70: "full" (strong shadows)
     """
     # Convert to grayscale if needed
     if len(image.shape) == 3:
@@ -47,7 +47,7 @@ def analyze_lighting(image: np.ndarray) -> Tuple[float, str]:
     # Determine recommendation
     if variation < 25:
         recommendation = "none"
-    elif variation <= 50:
+    elif variation <= 70:
         recommendation = "gentle"
     else:
         recommendation = "full"
@@ -135,12 +135,12 @@ def enhance(image: np.ndarray) -> np.ndarray:
     steps_applied = []
 
     # Step 2: Shadow removal (only if strong shadows detected)
-    if recommendation == "full" and variation > 50:
-        print(f"  Applying shadow removal (variation={variation:.1f} > 50)")
+    if recommendation == "full" and variation > 70:
+        print(f"  Applying shadow removal (variation={variation:.1f} > 70)")
         result = remove_shadows(result, strength="full")
         steps_applied.append("shadow_removal")
-    elif recommendation == "gentle" and variation > 35:
-        print(f"  Applying gentle shadow removal (variation={variation:.1f} > 35)")
+    elif recommendation == "gentle" and variation > 50:
+        print(f"  Applying gentle shadow removal (variation={variation:.1f} > 50)")
         result = remove_shadows(result, strength="gentle")
         steps_applied.append("gentle_shadow_removal")
     else:

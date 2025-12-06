@@ -10,7 +10,8 @@ import base64
 import numpy as np
 import cv2
 import img2pdf
-from typing import Dict
+from typing import Dict, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.models.schemas import ScanOptions
 from .detect_ml import detect
@@ -116,7 +117,7 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     2. Store original
     3. ML detection (DocAligner)
     4. Perspective transform (if detected) OR auto-trim (fallback)
-    5. Enhance image quality (gentle CLAHE only)
+    5. Enhance image quality (AFTER cropping to document only)
     6. Apply color mode
     7. Resize if needed (max 2000px)
     8. Generate PDF
@@ -182,7 +183,7 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
             pass
 
     try:
-        # Step 3: Enhance image quality (gentle CLAHE only)
+        # Step 3: Enhance image quality (AFTER cropping to document only)
         processed = enhance(processed)
         print(f"After enhance: {processed.shape[1]}x{processed.shape[0]}")
     except Exception as e:
@@ -238,3 +239,56 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
         "detection_method": detection_method,
         "detection_confidence": detection_confidence,
     }
+
+
+def process_documents_batch(images_bytes: List[bytes], options: ScanOptions, max_workers: int = 4) -> List[Dict]:
+    """
+    Process multiple documents in parallel using ThreadPoolExecutor
+
+    Args:
+        images_bytes: List of image byte arrays to process
+        options: Scan options to apply to all images
+        max_workers: Maximum number of parallel workers (default: 4)
+
+    Returns:
+        List of results from process_document, in same order as input
+    """
+    if not images_bytes:
+        return []
+
+    # If only one image, process directly without threading overhead
+    if len(images_bytes) == 1:
+        return [process_document(images_bytes[0], options)]
+
+    print(f"Processing {len(images_bytes)} images in parallel with {max_workers} workers")
+    start_time = time.time()
+
+    results = [None] * len(images_bytes)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks with their index
+        future_to_index = {
+            executor.submit(process_document, img_bytes, options): idx
+            for idx, img_bytes in enumerate(images_bytes)
+        }
+
+        # Collect results as they complete
+        for future in as_completed(future_to_index):
+            idx = future_to_index[future]
+            try:
+                result = future.result()
+                results[idx] = result
+                print(f"  Image {idx + 1}/{len(images_bytes)} completed")
+            except Exception as e:
+                print(f"  Image {idx + 1}/{len(images_bytes)} failed: {e}")
+                # Return error result
+                results[idx] = {
+                    "error": str(e),
+                    "processing_time_ms": 0,
+                    "document_detected": False,
+                }
+
+    total_time = time.time() - start_time
+    print(f"Batch processing completed in {total_time:.2f}s ({total_time/len(images_bytes):.2f}s per image)")
+
+    return results
