@@ -117,7 +117,7 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     2. Store original
     3. ML detection (DocAligner)
     4. Perspective transform (if detected) OR auto-trim (fallback)
-    5. Enhance image quality (AFTER cropping to document only)
+    5. Enhance image quality (CLAHE + sharpening)
     6. Apply color mode
     7. Resize if needed (max 2000px)
     8. Generate PDF
@@ -156,16 +156,8 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
 
     # Step 2: Transform or Auto-trim
     processed = image.copy()
-    is_id_card = False
 
     if document_detected and detection_result is not None:
-        # Calculate document area to detect ID cards
-        h, w = image.shape[:2]
-        area_pct = cv2.contourArea(detection_result.corners) / (w * h) * 100
-        is_id_card = area_pct < 30
-        if is_id_card:
-            print(f"Detected ID card/small document (area={area_pct:.1f}%)")
-
         # Try perspective transformation
         try:
             transformed = transform(image, detection_result.corners)
@@ -191,9 +183,8 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
             pass
 
     try:
-        # Step 3: Enhance image quality (AFTER cropping to document only)
-        # Skip shadow removal for ID cards (high variation is from design, not shadows)
-        processed = enhance(processed, skip_shadow_removal=is_id_card)
+        # Step 3: Enhance image quality (CLAHE + sharpening)
+        processed = enhance(processed)
         print(f"After enhance: {processed.shape[1]}x{processed.shape[0]}")
     except Exception as e:
         # Enhancement failed - use previous result
