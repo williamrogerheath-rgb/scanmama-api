@@ -109,18 +109,17 @@ def resize_if_needed(image: np.ndarray, max_edge: int = 2000) -> np.ndarray:
 
 def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     """
-    Simplified document processing pipeline (MVP)
+    Document processing pipeline with ML detection
 
     Pipeline:
     1. Decode image
     2. Store original
-    3. Auto-trim margins (remove obvious dead space)
-    4. Enhance image quality (gentle CLAHE only)
-    5. Apply color mode
-    6. Resize if needed (max 2000px)
-    7. Generate PDF
-
-    No document detection/cropping - just enhance what the user photographed.
+    3. ML detection (DocAligner)
+    4. Perspective transform (if detected) OR auto-trim (fallback)
+    5. Enhance image quality (gentle CLAHE only)
+    6. Apply color mode
+    7. Resize if needed (max 2000px)
+    8. Generate PDF
 
     Returns:
         Dict with original_bytes, processed_bytes, pdf_bytes, metadata
@@ -139,27 +138,51 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     _, original_jpg = cv2.imencode('.jpg', image, encode_params)
     original_bytes = original_jpg.tobytes()
 
-    # Initialize tracking variables - detection skipped for MVP
-    document_detected = False
-    detection_method = "skipped"
-    detection_confidence = 0.0
+    # Step 1: ML Document Detection
+    try:
+        detection_result = detect(image)
+        document_detected = detection_result.confidence > 0.5 and detection_result.mode != "fallback"
+        detection_method = detection_result.method
+        detection_confidence = detection_result.confidence
+
+        print(f"Detection result: detected={document_detected}, confidence={detection_confidence:.3f}, method={detection_method}")
+    except Exception as e:
+        print(f"Detection error: {e}")
+        document_detected = False
+        detection_method = "error"
+        detection_confidence = 0.0
+        detection_result = None
+
+    # Step 2: Transform or Auto-trim
     processed = image.copy()
 
-    # DETECTION & TRANSFORM SKIPPED FOR MVP
-    # Detection was failing on dark surfaces and cropping incorrectly
-    # For MVP, just enhance the full image as photographed
+    if document_detected and detection_result is not None:
+        # Try perspective transformation
+        try:
+            transformed = transform(image, detection_result.corners)
+            if transformed is not None:
+                processed = transformed
+                print(f"After transform: {processed.shape[1]}x{processed.shape[0]}")
+            else:
+                print("Transform returned None, falling back to auto-trim")
+                processed = auto_trim_margins(processed)
+                print(f"After trim (fallback): {processed.shape[1]}x{processed.shape[0]}")
+        except Exception as e:
+            print(f"Transform error: {e}, falling back to auto-trim")
+            processed = auto_trim_margins(processed)
+            print(f"After trim (fallback): {processed.shape[1]}x{processed.shape[0]}")
+    else:
+        # No document detected - use auto-trim fallback
+        print("No document detected, using auto-trim fallback")
+        try:
+            processed = auto_trim_margins(processed)
+            print(f"After trim: {processed.shape[1]}x{processed.shape[0]}")
+        except Exception as e:
+            print(f"Trim error: {e}")
+            pass
 
     try:
-        # Step 1: Auto-trim margins (remove obvious dead space)
-        processed = auto_trim_margins(processed)
-        print(f"After trim: {processed.shape[1]}x{processed.shape[0]}")
-    except Exception as e:
-        # Trim failed - use original
-        print(f"Trim error: {e}")
-        pass
-
-    try:
-        # Step 2: Enhance image quality (gentle CLAHE only)
+        # Step 3: Enhance image quality (gentle CLAHE only)
         processed = enhance(processed)
         print(f"After enhance: {processed.shape[1]}x{processed.shape[0]}")
     except Exception as e:
@@ -168,7 +191,7 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
         pass
 
     try:
-        # Step 3: Apply color mode
+        # Step 4: Apply color mode
         processed = apply_color_mode(processed, options.colorMode)
     except Exception as e:
         # Color mode failed - use previous result
@@ -176,7 +199,7 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
         pass
 
     try:
-        # Step 4: Resize if needed (max 2000px on longest edge)
+        # Step 5: Resize if needed (max 2000px on longest edge)
         original_size = f"{processed.shape[1]}x{processed.shape[0]}"
         processed = resize_if_needed(processed, max_edge=2000)
         if processed.shape[1] != image.shape[1] or processed.shape[0] != image.shape[0]:
