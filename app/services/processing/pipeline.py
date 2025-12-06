@@ -47,6 +47,52 @@ def apply_color_mode(image: np.ndarray, mode: str) -> np.ndarray:
         return image
 
 
+def auto_trim_margins(image: np.ndarray, padding: int = 20) -> np.ndarray:
+    """Trim obvious uniform margins from image edges."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Calculate variance for each row and column
+    row_var = np.var(gray, axis=1)
+    col_var = np.var(gray, axis=0)
+
+    # Find where content exists (variance above threshold)
+    threshold = np.mean(row_var) * 0.1  # 10% of mean variance
+
+    rows_with_content = np.where(row_var > threshold)[0]
+    cols_with_content = np.where(col_var > threshold)[0]
+
+    if len(rows_with_content) == 0 or len(cols_with_content) == 0:
+        return image  # No trimming possible
+
+    # Get bounds with padding
+    top = max(0, rows_with_content[0] - padding)
+    bottom = min(image.shape[0], rows_with_content[-1] + padding)
+    left = max(0, cols_with_content[0] - padding)
+    right = min(image.shape[1], cols_with_content[-1] + padding)
+
+    # Only crop if we're removing significant margins (>5% per side)
+    min_crop = 0.05
+    if (top < image.shape[0] * min_crop and
+        bottom > image.shape[0] * (1 - min_crop) and
+        left < image.shape[1] * min_crop and
+        right > image.shape[1] * (1 - min_crop)):
+        return image  # Not enough to trim
+
+    return image[top:bottom, left:right]
+
+
+def resize_if_needed(image: np.ndarray, max_edge: int = 2000) -> np.ndarray:
+    """Resize image if larger than max_edge."""
+    h, w = image.shape[:2]
+    if max(h, w) <= max_edge:
+        return image
+
+    scale = max_edge / max(h, w)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+
 def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     """
     Simplified document processing pipeline (MVP)
@@ -54,9 +100,11 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     Pipeline:
     1. Decode image
     2. Store original
-    3. Enhance image quality (gentle CLAHE only)
-    4. Apply color mode
-    5. Generate PDF
+    3. Auto-trim margins (remove obvious dead space)
+    4. Enhance image quality (gentle CLAHE only)
+    5. Apply color mode
+    6. Resize if needed (max 2000px)
+    7. Generate PDF
 
     No document detection/cropping - just enhance what the user photographed.
 
@@ -72,8 +120,8 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     if image is None:
         raise ValueError("Failed to decode image")
 
-    # Store original as JPEG (quality 92)
-    encode_params = [cv2.IMWRITE_JPEG_QUALITY, 92]
+    # Store original as JPEG (quality 85 for smaller file size)
+    encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
     _, original_jpg = cv2.imencode('.jpg', image, encode_params)
     original_bytes = original_jpg.tobytes()
 
@@ -86,40 +134,46 @@ def process_document(image_bytes: bytes, options: ScanOptions) -> Dict:
     # DETECTION & TRANSFORM SKIPPED FOR MVP
     # Detection was failing on dark surfaces and cropping incorrectly
     # For MVP, just enhance the full image as photographed
-    #
-    # try:
-    #     detection_result = detect(image, debug=False)
-    #     detection_method = detection_result.method
-    #     detection_confidence = detection_result.confidence
-    #
-    #     if detection_confidence >= 0.4 and detection_result.mode != "fallback":
-    #         document_detected = True
-    #         transformed = transform(image, detection_result.corners)
-    #         if transformed is not None:
-    #             processed = transformed
-    # except Exception as e:
-    #     print(f"Detection error: {e}")
-    #     pass
 
     try:
-        # Step 1: Enhance image quality (gentle CLAHE only)
-        processed = enhance(processed)
-        print(f"Image enhanced: {processed.shape[1]}x{processed.shape[0]}")
+        # Step 1: Auto-trim margins (remove obvious dead space)
+        processed = auto_trim_margins(processed)
+        print(f"After trim: {processed.shape[1]}x{processed.shape[0]}")
     except Exception as e:
-        # Enhancement failed - use original
+        # Trim failed - use original
+        print(f"Trim error: {e}")
+        pass
+
+    try:
+        # Step 2: Enhance image quality (gentle CLAHE only)
+        processed = enhance(processed)
+        print(f"After enhance: {processed.shape[1]}x{processed.shape[0]}")
+    except Exception as e:
+        # Enhancement failed - use previous result
         print(f"Enhancement error: {e}")
         pass
 
     try:
-        # Step 2: Apply color mode
+        # Step 3: Apply color mode
         processed = apply_color_mode(processed, options.colorMode)
     except Exception as e:
         # Color mode failed - use previous result
         print(f"Color mode error: {e}")
         pass
 
-    # Encode processed image as JPEG (quality 95 for final output)
-    encode_params_final = [cv2.IMWRITE_JPEG_QUALITY, 95]
+    try:
+        # Step 4: Resize if needed (max 2000px on longest edge)
+        original_size = f"{processed.shape[1]}x{processed.shape[0]}"
+        processed = resize_if_needed(processed, max_edge=2000)
+        if processed.shape[1] != image.shape[1] or processed.shape[0] != image.shape[0]:
+            print(f"Resized: {original_size} -> {processed.shape[1]}x{processed.shape[0]}")
+    except Exception as e:
+        # Resize failed - use previous result
+        print(f"Resize error: {e}")
+        pass
+
+    # Encode processed image as JPEG (quality 85 for smaller file size)
+    encode_params_final = [cv2.IMWRITE_JPEG_QUALITY, 85]
     _, processed_jpg = cv2.imencode('.jpg', processed, encode_params_final)
     processed_bytes = processed_jpg.tobytes()
 
