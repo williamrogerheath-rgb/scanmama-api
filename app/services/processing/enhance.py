@@ -47,26 +47,22 @@ def sharpen(image: np.ndarray, strength: float = 0.3) -> np.ndarray:
 
 def enhance(image: np.ndarray) -> np.ndarray:
     """
-    Image enhancement with CLAHE and sharpening
-
-    Applies:
-    1. Gentle CLAHE for contrast
-    2. Subtle sharpening for clarity
-
-    Args:
-        image: Input image
-
-    Returns:
-        Enhanced image
+    Minimal enhancement - just gentle CLAHE, no shadow removal.
+    The aggressive enhancement was destroying image quality.
     """
-    print(f"Enhancement: Applying CLAHE + sharpening")
+    print(f"Enhancement: Applying gentle CLAHE only (clipLimit=1.0)")
 
-    # Apply CLAHE for contrast
-    result = apply_clahe(image, clip_limit=1.5)
+    # Convert to LAB
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
 
-    # Apply sharpening for clarity
-    result = sharpen(result, strength=0.3)
+    # Very gentle CLAHE only
+    clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+
+    # Merge and convert back
+    lab = cv2.merge([l, a, b])
+    result = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
     print(f"  Enhancement complete")
-
     return result
