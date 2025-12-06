@@ -119,27 +119,19 @@ def sharpen(image: np.ndarray, strength: float = 0.3) -> np.ndarray:
 
 def enhance(image: np.ndarray) -> np.ndarray:
     """
-    Main enhancement pipeline with conditional shadow removal
-
-    1. Analyze lighting variation
-    2. Apply shadow removal only if needed (variation >= 25)
-    3. Apply gentle CLAHE (always)
-    4. Apply subtle sharpening (always)
-
-    Returns:
-        Enhanced image
+    Minimal enhancement - just gentle CLAHE, no shadow removal.
+    The aggressive enhancement was destroying image quality.
     """
-    # Analyze lighting to determine shadow removal strategy
-    variation, recommendation = analyze_lighting(image)
+    # Convert to LAB
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
 
-    # Apply shadow removal conditionally
-    if recommendation != "none":
-        image = remove_shadows(image, strength=recommendation)
+    # Very gentle CLAHE only
+    clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
 
-    # Always apply gentle CLAHE for contrast
-    image = apply_clahe(image, clip_limit=1.5)
+    # Merge and convert back
+    lab = cv2.merge([l, a, b])
+    result = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
-    # Always apply subtle sharpening
-    image = sharpen(image, strength=0.3)
-
-    return image
+    return result
