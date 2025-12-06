@@ -136,7 +136,8 @@ def find_best_contour(
             height, width = image_shape[:2]
             image_area = height * width
             area_ratio = cv2.contourArea(contour) / image_area
-            print(f"  Contour {idx+1}: area_ratio={area_ratio:.3f}, points={len(approx)}", end="")
+            area_pct = area_ratio * 100
+            print(f"  Contour {idx+1}: area={area_pct:.1f}% ({area_ratio:.3f}), points={len(approx)}", end="")
 
         if len(approx) < 4 or len(approx) > 6:
             if debug and idx < 5:
@@ -169,7 +170,20 @@ def find_best_contour(
             hull_area = cv2.contourArea(hull)
             contour_area = cv2.contourArea(pts)
             convexity = contour_area / (hull_area + 1e-6)
-            print(f", aspect={aspect:.2f}, convexity={convexity:.2f}, conf={confidence:.3f}")
+
+            # Show if confidence is too low
+            min_area, max_area = area_range
+            min_aspect, max_aspect = aspect_range
+            area_ok = min_area <= area_ratio <= max_area
+            aspect_ok = (min_aspect <= aspect <= max_aspect) or (min_aspect <= 1.0/aspect <= max_aspect)
+
+            status = "✓ ACCEPTED" if confidence >= 0.5 else "✗ LOW CONF"
+            print(f", aspect={aspect:.2f}, convexity={convexity:.2f}, conf={confidence:.3f} - {status}")
+
+            if not area_ok:
+                print(f"    └─ Area {area_pct:.1f}% outside range {min_area*100:.0f}-{max_area*100:.0f}%")
+            if not aspect_ok:
+                print(f"    └─ Aspect {aspect:.2f} outside range {min_aspect:.1f}-{max_aspect:.1f}")
 
         if confidence > best_confidence:
             best_confidence = confidence
@@ -248,29 +262,49 @@ def detect(image: np.ndarray, debug: bool = False) -> DetectionResult:
     Returns highest confidence result, prefers ID card on ties
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+    h, w = gray.shape[:2]
+
+    # ALWAYS log image info for debugging detection issues
+    print(f"\n=== DOCUMENT DETECTION START ===")
+    print(f"Image dimensions: {w}x{h} ({w*h} pixels)")
+    print(f"Document mode expects: 20-95% area, 0.5-2.0 aspect ratio")
+    print(f"ID Card mode expects: 5-30% area, 1.3-2.5 aspect ratio")
 
     # Try both modes
-    if debug:
-        print("Document mode:")
-    doc_result = detect_mode(gray, "document", (0.20, 0.95), (0.5, 2.0), debug=debug)
-    if debug:
-        print("ID Card mode:")
-    id_result = detect_mode(gray, "id_card", (0.05, 0.30), (1.3, 2.5), debug=debug)
+    print("\n--- Document mode ---")
+    doc_result = detect_mode(gray, "document", (0.20, 0.95), (0.5, 2.0), debug=True)
+    if doc_result:
+        area_pct = cv2.contourArea(doc_result.corners) / (w * h) * 100
+        print(f"Document result: confidence={doc_result.confidence:.3f}, area={area_pct:.1f}%, method={doc_result.method}")
+    else:
+        print("Document result: FAILED - no valid contour found")
+
+    print("\n--- ID Card mode ---")
+    id_result = detect_mode(gray, "id_card", (0.05, 0.30), (1.3, 2.5), debug=True)
+    if id_result:
+        area_pct = cv2.contourArea(id_result.corners) / (w * h) * 100
+        print(f"ID Card result: confidence={id_result.confidence:.3f}, area={area_pct:.1f}%, method={id_result.method}")
+    else:
+        print("ID Card result: FAILED - no valid contour found")
 
     # Return best (prefer document mode when it has higher confidence, ID card on tie)
     if doc_result is None and id_result is None:
-        h, w = gray.shape[:2]
+        print(f"\n>>> FALLBACK: Both modes failed, using full image")
         corners = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
         return DetectionResult(corners=corners, confidence=0.0, mode="fallback", method="none")
 
     if doc_result is None:
+        print(f"\n>>> SELECTED: ID Card mode (document failed)")
         return id_result
     if id_result is None:
+        print(f"\n>>> SELECTED: Document mode (ID card failed)")
         return doc_result
 
     # Prefer document mode if it has strictly higher confidence
     if doc_result.confidence > id_result.confidence:
+        print(f"\n>>> SELECTED: Document mode (conf={doc_result.confidence:.3f} > {id_result.confidence:.3f})")
         return doc_result
 
     # Otherwise prefer ID card (including ties)
+    print(f"\n>>> SELECTED: ID Card mode (conf={id_result.confidence:.3f} >= {doc_result.confidence:.3f})")
     return id_result
